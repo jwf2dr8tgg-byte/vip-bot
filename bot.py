@@ -1162,6 +1162,33 @@ async def send_free_channel_post(bot, text: str) -> None:
     )
 
 
+async def send_generated_signal_posts(bot, analysis: SignalAnalysis) -> bool:
+    logger.info(
+        "Sending FULL signal to VIP channel: chat_id=%s symbol=%s",
+        SETTINGS.vip_channel_id,
+        analysis.symbol,
+    )
+    try:
+        await bot.send_message(SETTINGS.vip_channel_id, vip_signal_message(analysis))
+    except TelegramError:
+        logger.exception(
+            "Failed to send FULL signal to VIP channel: chat_id=%s symbol=%s",
+            SETTINGS.vip_channel_id,
+            analysis.symbol,
+        )
+        return False
+
+    try:
+        await send_free_channel_post(bot, teaser_signal_message(analysis))
+    except TelegramError:
+        logger.exception(
+            "Failed to send teaser signal to FREE channel: chat_id=%s symbol=%s",
+            SETTINGS.free_channel_id,
+            analysis.symbol,
+        )
+    return True
+
+
 def build_channel_stats_text() -> str:
     stats = storage.get_channel_stats(now_ts())
     return channel_stats_message(
@@ -1468,8 +1495,9 @@ async def process_market_signals(bot, snapshot: dict[str, dict[str, float | list
             analysis.rsi,
             analysis.reason,
         )
-        await bot.send_message(SETTINGS.vip_channel_id, vip_signal_message(analysis))
-        await send_free_channel_post(bot, teaser_signal_message(analysis))
+        vip_sent = await send_generated_signal_posts(bot, analysis)
+        if not vip_sent:
+            continue
         storage.record_signal_alert(
             analysis.symbol,
             last_alert_at=current_ts,
@@ -1580,23 +1608,49 @@ async def signal_loop(application: Application) -> None:
         await asyncio.sleep(1800)
 
 
-async def ensure_channel_access(bot, chat_id: int | str, *, require_invites: bool = False) -> None:
+async def ensure_channel_access(
+    bot,
+    chat_id: int | str,
+    *,
+    require_invites: bool = False,
+    channel_label: str = "channel",
+) -> None:
     me = await bot.get_me()
     member = await bot.get_chat_member(chat_id, me.id)
     if member.status != "administrator":
-        raise RuntimeError(f"The bot must be an administrator in {chat_id}.")
+        raise RuntimeError(f"The bot must be an administrator in the {channel_label} ({chat_id}).")
     if require_invites and not getattr(member, "can_invite_users", False):
-        raise RuntimeError("The bot admin role must include invite permissions.")
+        raise RuntimeError(
+            f"The bot must have Add Subscribers/Invite Users in the {channel_label} ({chat_id})."
+        )
     can_post = getattr(member, "can_post_messages", None)
     if can_post is False:
-        raise RuntimeError(f"The bot must be allowed to post messages in {chat_id}.")
+        raise RuntimeError(
+            f"The bot must have Post Messages in the {channel_label} ({chat_id})."
+        )
+    logger.info(
+        "Verified %s access: chat_id=%s can_post_messages=%s can_invite_users=%s",
+        channel_label,
+        chat_id,
+        can_post,
+        getattr(member, "can_invite_users", None),
+    )
 
 
 async def post_init(application: Application) -> None:
     storage.init()
 
-    await ensure_channel_access(application.bot, SETTINGS.vip_channel_id, require_invites=True)
-    await ensure_channel_access(application.bot, SETTINGS.free_channel_id)
+    await ensure_channel_access(
+        application.bot,
+        SETTINGS.vip_channel_id,
+        require_invites=True,
+        channel_label="VIP channel",
+    )
+    await ensure_channel_access(
+        application.bot,
+        SETTINGS.free_channel_id,
+        channel_label="FREE channel",
+    )
     member = await application.bot.get_chat_member(
         SETTINGS.vip_channel_id,
         (await application.bot.get_me()).id,
@@ -1748,11 +1802,13 @@ async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     signal = build_test_signal()
     try:
-        await context.bot.send_message(SETTINGS.vip_channel_id, vip_signal_message(signal))
-        await send_free_channel_post(context.bot, teaser_signal_message(signal))
+        vip_sent = await send_generated_signal_posts(context.bot, signal)
     except TelegramError:
         logger.exception("Failed to send test signal to configured channels.")
         await message.reply_text("❌ تعذر إرسال إشارة الاختبار")
+        return
+    if not vip_sent:
+        await message.reply_text("❌ تعذر إرسال الإشارة إلى قناة VIP")
         return
 
     logger.info("تم إرسال إشارة اختبار إلى VIP و FREE للعملة %s", signal.symbol)

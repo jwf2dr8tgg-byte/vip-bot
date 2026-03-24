@@ -150,7 +150,6 @@ class Settings:
     access_days: int
     invite_link_hours: int
     cleanup_interval_seconds: int
-    signal_check_seconds: int
     signal_alert_threshold_pct: float
     signal_alert_cooldown_seconds: int
     coingecko_base_url: str
@@ -195,7 +194,6 @@ def load_settings() -> Settings:
     access_days = int(os.getenv("ACCESS_DAYS", "30"))
     invite_link_hours = int(os.getenv("INVITE_LINK_HOURS", "24"))
     cleanup_interval_seconds = int(os.getenv("CLEANUP_INTERVAL_SECONDS", "3600"))
-    signal_check_seconds = int(os.getenv("SIGNAL_CHECK_SECONDS", "300"))
     signal_alert_threshold_pct = float(os.getenv("SIGNAL_ALERT_THRESHOLD_PCT", "5"))
     signal_alert_cooldown_seconds = int(os.getenv("SIGNAL_ALERT_COOLDOWN_SECONDS", "7200"))
     coingecko_base_url = os.getenv(
@@ -214,8 +212,6 @@ def load_settings() -> Settings:
         raise SystemExit("INVITE_LINK_HOURS must be greater than 0.")
     if cleanup_interval_seconds <= 0:
         raise SystemExit("CLEANUP_INTERVAL_SECONDS must be greater than 0.")
-    if signal_check_seconds <= 0:
-        raise SystemExit("SIGNAL_CHECK_SECONDS must be greater than 0.")
     if signal_alert_threshold_pct <= 0:
         raise SystemExit("SIGNAL_ALERT_THRESHOLD_PCT must be greater than 0.")
     if signal_alert_cooldown_seconds <= 0:
@@ -231,7 +227,6 @@ def load_settings() -> Settings:
         access_days=access_days,
         invite_link_hours=invite_link_hours,
         cleanup_interval_seconds=cleanup_interval_seconds,
-        signal_check_seconds=signal_check_seconds,
         signal_alert_threshold_pct=signal_alert_threshold_pct,
         signal_alert_cooldown_seconds=signal_alert_cooldown_seconds,
         coingecko_base_url=coingecko_base_url,
@@ -1582,7 +1577,7 @@ async def signal_loop(application: Application) -> None:
             await process_signal_cycle(application.bot)
         except Exception:
             logger.exception("Signal loop failed.")
-        await asyncio.sleep(SETTINGS.signal_check_seconds)
+        await asyncio.sleep(1800)
 
 
 async def ensure_channel_access(bot, chat_id: int | str, *, require_invites: bool = False) -> None:

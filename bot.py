@@ -32,11 +32,8 @@ from telegram.ext import (
 )
 
 ENV_FILE = Path(__file__).with_name(".env")
-try:
-    load_dotenv()
-except AssertionError:
-    pass
-load_dotenv(dotenv_path=ENV_FILE)
+if ENV_FILE.is_file():
+    load_dotenv(dotenv_path=ENV_FILE)
 
 
 logging.basicConfig(

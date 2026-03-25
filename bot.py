@@ -6,6 +6,7 @@ import logging
 import os
 import random
 import sqlite3
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -119,6 +120,7 @@ MARKET_OVERVIEW_LIMIT = 25
 FEAR_GREED_API_URL = "https://api.alternative.me/fng/"
 PROMO_MIN_INTERVAL_SECONDS = 12 * 60 * 60
 PROMO_MAX_PER_DAY = 2
+POLLING_CONFLICT_RETRY_SECONDS = 20
 TEASER_BODY_VARIANTS = (
     "إشارة واضحة\nدخول قريب",
     "فرصة واضحة\nدخول قريب",
@@ -3924,14 +3926,15 @@ async def fallback_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     if isinstance(context.error, Conflict):
         logger.error(
-            "Telegram polling conflict detected. Another bot instance is already running for this token. Stopping this instance."
+            "Telegram polling conflict detected. Another bot instance is already running for this token. This instance will stop and retry."
         )
+        context.application.bot_data["restart_after_conflict"] = True
         context.application.stop_running()
         return
     logger.exception("Unhandled error while processing update.", exc_info=context.error)
 
 
-def main() -> None:
+def build_application() -> Application:
     application = (
         Application.builder()
         .token(SETTINGS.token)
@@ -3972,15 +3975,32 @@ def main() -> None:
         )
     )
     application.add_error_handler(error_handler)
+    return application
 
-    application.run_polling(
-        allowed_updates=[
-            "message",
-            "callback_query",
-            "pre_checkout_query",
-            "chat_join_request",
-        ]
-    )
+
+def main() -> None:
+    while True:
+        application = build_application()
+        application.bot_data["restart_after_conflict"] = False
+
+        application.run_polling(
+            allowed_updates=[
+                "message",
+                "callback_query",
+                "pre_checkout_query",
+                "chat_join_request",
+            ],
+            close_loop=False,
+        )
+
+        if not application.bot_data.get("restart_after_conflict"):
+            break
+
+        logger.warning(
+            "Retrying Telegram polling in %s seconds after conflict.",
+            POLLING_CONFLICT_RETRY_SECONDS,
+        )
+        time.sleep(POLLING_CONFLICT_RETRY_SECONDS)
 
 
 if __name__ == "__main__":

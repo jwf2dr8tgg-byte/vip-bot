@@ -1875,6 +1875,40 @@ def build_free_chart_caption(
     )
 
 
+def build_vip_chart_caption(
+    snapshot: dict[str, dict[str, float | list[float]]],
+    symbol: str,
+) -> str | None:
+    data = snapshot.get(symbol)
+    if not data:
+        return None
+
+    context_data = snapshot_context(symbol, data)
+    if not context_data:
+        return None
+
+    support = float(context_data["support"])
+    resistance = float(context_data["resistance"])
+    detail_lines = [
+        str(context_data["reason"]),
+        f"النطاق الحاسم الآن بين {format_price(support)} و {format_price(resistance)}",
+    ]
+    if str(context_data["side"]) == "long":
+        outlook = f"أفضلية الحركة تبقى إيجابية إذا استمر الثبات فوق {format_price(support)}"
+    else:
+        outlook = f"أفضلية الحذر قائمة إذا استمر الرفض دون {format_price(resistance)}"
+
+    return build_vip_insight_post(
+        title="شارت VIP",
+        symbol=symbol,
+        price=float(context_data["price"]),
+        prices=list(context_data["prices"]),
+        change_pct=float(context_data["change_pct"]),
+        detail_lines=detail_lines,
+        outlook=outlook,
+    )
+
+
 def render_price_chart(
     *,
     symbol: str,
@@ -2639,6 +2673,31 @@ async def send_free_channel_photo(bot, photo, caption: str) -> None:
     )
 
 
+async def send_vip_channel_photo(bot, photo, caption: str, *, post_type: str) -> bool:
+    logger.info("Sending %s photo to VIP channel: vip_channel_id=%s", post_type, SETTINGS.vip_channel_id)
+    try:
+        sent_message = await bot.send_photo(
+            SETTINGS.vip_channel_id,
+            photo=photo,
+            caption=caption,
+        )
+    except TelegramError as exc:
+        logger.exception(
+            "Failed to send %s photo to VIP channel: vip_channel_id=%s error=%s",
+            post_type,
+            SETTINGS.vip_channel_id,
+            exc,
+        )
+        return False
+    logger.info(
+        "VIP photo send success: post_type=%s vip_channel_id=%s message_id=%s",
+        post_type,
+        SETTINGS.vip_channel_id,
+        sent_message.message_id,
+    )
+    return True
+
+
 async def send_vip_channel_post(bot, text: str, *, post_type: str) -> bool:
     logger.info("Sending %s to VIP channel: vip_channel_id=%s", post_type, SETTINGS.vip_channel_id)
     try:
@@ -3399,7 +3458,8 @@ async def process_free_chart_update(
         resistance=float(context_data["resistance"]),
     )
     caption = build_free_chart_caption(snapshot, symbol)
-    if not chart or not caption:
+    vip_caption = build_vip_chart_caption(snapshot, symbol)
+    if not chart or (not caption and not vip_caption):
         storage.record_market_update(
             FREE_CHART_KEY,
             sent_at=current_ts,
@@ -3410,7 +3470,21 @@ async def process_free_chart_update(
         return
 
     try:
-        await send_free_channel_photo(bot, chart, caption)
+        chart_bytes = chart.getvalue()
+        if vip_caption:
+            vip_chart = io.BytesIO(chart_bytes)
+            vip_chart.name = chart.name
+            try:
+                await send_vip_channel_photo(bot, vip_chart, vip_caption, post_type="chart update")
+            finally:
+                vip_chart.close()
+        if caption:
+            free_chart = io.BytesIO(chart_bytes)
+            free_chart.name = chart.name
+            try:
+                await send_free_channel_photo(bot, free_chart, caption)
+            finally:
+                free_chart.close()
     finally:
         chart.close()
 
@@ -3419,7 +3493,7 @@ async def process_free_chart_update(
         sent_at=current_ts,
         next_due_at=current_ts + random_due_in(FREE_CHART_MIN_INTERVAL_SECONDS, FREE_CHART_MAX_INTERVAL_SECONDS),
     )
-    logger.info("تم إرسال شارت تحليلي إلى القناة المجانية: %s", symbol)
+    logger.info("تم إرسال شارت تحليلي إلى VIP و FREE: %s", symbol)
 
 
 async def process_free_market_update(bot, snapshot: dict[str, dict[str, float | list[float]]]) -> None:
